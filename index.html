@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Email Checker</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <style>
   *{margin:0;padding:0;box-sizing:border-box}
   :root{
@@ -39,9 +40,13 @@
   .btn-primary{background:linear-gradient(135deg,var(--accent),#7c6cf0);color:#fff;width:100%;justify-content:center;margin-top:16px}
   .btn-primary:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 4px 20px rgba(108,92,231,.4)}
   .btn-primary:disabled{opacity:.4;cursor:not-allowed}
-  .btn-sm{padding:6px 14px;font-size:12px;border-radius:6px}
+  .btn-sm{padding:8px 16px;font-size:12px;border-radius:6px}
   .btn-outline{background:transparent;border:1px solid var(--border);color:var(--text2)}
   .btn-outline:hover{border-color:var(--accent);color:var(--text)}
+  .btn-green{background:var(--green);color:#000;font-weight:700}
+  .btn-green:hover{opacity:.85}
+  .btn-red{background:var(--red);color:#fff;font-weight:700}
+  .btn-red:hover{opacity:.85}
 
   .progress-section{display:none}
   .progress-bar-wrap{background:var(--surface2);border-radius:20px;height:8px;overflow:hidden;margin:12px 0}
@@ -74,7 +79,16 @@
   .result-item:last-child{border-bottom:none}
   .result-empty{text-align:center;padding:30px;color:var(--text2);font-size:13px}
 
-  .result-actions{display:flex;gap:8px;margin-top:12px;justify-content:flex-end}
+  .result-actions{display:flex;gap:8px;margin-top:16px;justify-content:flex-end;flex-wrap:wrap}
+  .export-section{margin-top:20px;padding-top:20px;border-top:1px solid var(--border)}
+  .export-title{font-size:13px;font-weight:600;color:var(--text2);margin-bottom:12px;text-transform:uppercase;letter-spacing:1px}
+  .export-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .export-card{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:14px;cursor:pointer;transition:all .2s;text-align:center}
+  .export-card:hover{border-color:var(--accent);transform:translateY(-1px)}
+  .export-card-title{font-size:13px;font-weight:600;margin-bottom:4px}
+  .export-card-desc{font-size:11px;color:var(--text2)}
+  .export-card.green{border-color:rgba(0,230,118,.3)}
+  .export-card.green:hover{border-color:var(--green);background:rgba(0,230,118,.05)}
 
   ::-webkit-scrollbar{width:6px}
   ::-webkit-scrollbar-track{background:transparent}
@@ -108,9 +122,9 @@
       <div class="drop-zone-text">Drag & drop file here or <span id="browseBtn">browse</span></div>
     </div>
     <input type="file" id="fileInput" accept=".txt,.csv" style="display:none">
-    <textarea id="accountsInput" placeholder="Or paste accounts here (one per line)&#10;&#10;Supported formats:&#10;email@gmail.com&#10;email@gmail.com:password&#10;email@gmail.com;password&#10;email@gmail.com#token:password"></textarea>
+    <textarea id="accountsInput" placeholder="Paste accounts here (one per line)&#10;&#10;Supported formats:&#10;email@gmail.com&#10;email@gmail.com:password&#10;email@gmail.com#password#[cookies_json]&#10;email@gmail.com;password&#10;&#10;Only emails are sent for checking. Passwords and cookies stay local."></textarea>
     <div class="info-bar">
-      <div>Supports formats: <code>login</code>, <code>login:pass</code>, <code>login;pass</code>, <code>login#pass</code>, etc.</div>
+      <div>Only emails are sent to API. Passwords & cookies never leave your browser.</div>
       <div class="account-count"><span id="accountCount">0</span> accounts</div>
     </div>
     <div class="settings-row">
@@ -141,9 +155,30 @@
     <div class="tabs" id="tabs"></div>
     <div class="result-list" id="resultList"></div>
     <div class="result-actions">
-      <button class="btn btn-sm btn-outline" id="copyBtn">Copy</button>
-      <button class="btn btn-sm btn-outline" id="downloadBtn">Download .txt</button>
-      <button class="btn btn-sm btn-outline" id="downloadAllBtn">Download All</button>
+      <button class="btn btn-sm btn-outline" id="copyBtn">Copy Emails</button>
+      <button class="btn btn-sm btn-outline" id="downloadBtn">Download Emails .txt</button>
+    </div>
+
+    <div class="export-section">
+      <div class="export-title">Export with full data</div>
+      <div class="export-grid">
+        <div class="export-card green" id="exportLiveSessions">
+          <div class="export-card-title">Live Sessions ZIP</div>
+          <div class="export-card-desc">sessions.txt + credentials.txt</div>
+        </div>
+        <div class="export-card green" id="exportLiveCredentials">
+          <div class="export-card-title">Live Credentials</div>
+          <div class="export-card-desc">login:password</div>
+        </div>
+        <div class="export-card" id="exportAllSessions">
+          <div class="export-card-title">All Sessions ZIP</div>
+          <div class="export-card-desc">By category with full data</div>
+        </div>
+        <div class="export-card" id="exportAllCredentials">
+          <div class="export-card-title">All Credentials</div>
+          <div class="export-card-desc">By category login:password</div>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -174,22 +209,66 @@ let results = { LIVE: [], DISABLED: [], NOTEXISTS: [], VERIFYED: [], UNKNOW: [] 
 let activeTab = 'LIVE';
 let isRunning = false;
 
-// --- Extract login from line ---
-function extractLogin(line) {
-  return line.split(/[:;#|,\t ]/)[0].trim();
+// --- Store full account data keyed by login ---
+// accountDataMap[login] = { login, password, cookies, rawLine }
+let accountDataMap = {};
+
+function parseLine(line) {
+  line = line.trim();
+  if (!line) return null;
+
+  // Try format: login#password#[cookies_json]
+  const firstHash = line.indexOf('#');
+  if (firstHash !== -1) {
+    const login = line.slice(0, firstHash);
+    const rest = line.slice(firstHash + 1);
+    // Find where JSON array starts
+    const jsonStart = rest.indexOf('[');
+    if (jsonStart !== -1) {
+      const password = rest.slice(0, jsonStart).replace(/[#]$/, '');
+      const cookiesRaw = rest.slice(jsonStart);
+      let cookies = null;
+      try { cookies = JSON.parse(cookiesRaw); } catch(e) {}
+      return { login, password, cookies, rawLine: line };
+    }
+    // Format: login#password (no cookies)
+    const secondHash = rest.indexOf('#');
+    if (secondHash !== -1) {
+      const password = rest.slice(0, secondHash);
+      return { login, password, cookies: null, rawLine: line };
+    }
+    return { login, password: rest, cookies: null, rawLine: line };
+  }
+
+  // Try other delimiters: login:pass, login;pass, login|pass, login,pass
+  for (const delim of [':', ';', '|', ',', '\t', ' ']) {
+    const idx = line.indexOf(delim);
+    if (idx !== -1) {
+      return { login: line.slice(0, idx), password: line.slice(idx + 1), cookies: null, rawLine: line };
+    }
+  }
+
+  // Just login
+  return { login: line, password: '', cookies: null, rawLine: line };
 }
 
-function getAccounts() {
-  return accountsInput.value
-    .split(/\r?\n/)
-    .map(l => l.trim())
-    .filter(l => l.length > 0)
-    .map(l => extractLogin(l))
-    .filter(l => l.length > 0);
+function parseAllAccounts() {
+  const lines = accountsInput.value.split(/\r?\n/);
+  accountDataMap = {};
+  const logins = [];
+
+  for (const line of lines) {
+    const parsed = parseLine(line);
+    if (!parsed || !parsed.login) continue;
+    accountDataMap[parsed.login] = parsed;
+    logins.push(parsed.login);
+  }
+
+  return logins;
 }
 
 function updateCount() {
-  const count = getAccounts().length;
+  const count = parseAllAccounts().length;
   accountCount.textContent = count;
   startBtn.disabled = count === 0 || isRunning;
 }
@@ -217,7 +296,7 @@ function loadFile(file) {
   reader.onload = (e) => {
     accountsInput.value = e.target.result;
     updateCount();
-    toast(`Loaded ${getAccounts().length} accounts from ${file.name}`);
+    toast(`Loaded ${parseAllAccounts().length} accounts from ${file.name}`);
   };
   reader.readAsText(file);
 }
@@ -262,8 +341,8 @@ function sleep(ms) {
 startBtn.addEventListener('click', runCheck);
 
 async function runCheck() {
-  const accounts = getAccounts();
-  if (!accounts.length) return;
+  const logins = parseAllAccounts();
+  if (!logins.length) return;
 
   const batchSize = parseInt($('#batchSize').value) || 10;
   const delay = (parseInt($('#delaySeconds').value) || 3) * 1000;
@@ -279,13 +358,12 @@ async function runCheck() {
   progressLog.innerHTML = '';
 
   const batches = [];
-  for (let i = 0; i < accounts.length; i += batchSize) {
-    batches.push(accounts.slice(i, i + batchSize));
+  for (let i = 0; i < logins.length; i += batchSize) {
+    batches.push(logins.slice(i, i + batchSize));
   }
 
   for (let i = 0; i < batches.length; i++) {
     const batch = batches[i];
-    const pct = ((i + 1) / batches.length * 100).toFixed(0);
     progressText.textContent = `Batch ${i + 1} / ${batches.length}`;
     progressBar.style.width = `${((i) / batches.length * 100).toFixed(0)}%`;
 
@@ -405,38 +483,98 @@ function renderList() {
   }).join('');
 }
 
-function getCurrentList() {
+function getCurrentEmails() {
   if (activeTab === 'ALL') {
-    const lines = [];
-    for (const [key, list] of Object.entries(results)) {
-      list.forEach(e => lines.push(`${TAB_META[key].label}|${e}`));
-    }
-    return lines;
+    const all = [];
+    for (const list of Object.values(results)) all.push(...list);
+    return all;
   }
   return results[activeTab] || [];
 }
 
+// --- Export helpers ---
+function buildSessionLine(login) {
+  const data = accountDataMap[login];
+  if (!data) return null;
+  const cookies = data.cookies || [];
+  const sessionObj = {
+    session: { cookies },
+    account: data.password ? `${data.login}:${data.password}` : data.login,
+  };
+  return JSON.stringify(sessionObj);
+}
+
+function buildCredentialLine(login) {
+  const data = accountDataMap[login];
+  if (!data) return null;
+  return data.password ? `${data.login}:${data.password}` : data.login;
+}
+
+function getEmailsForCategory(category) {
+  if (category === 'ALL') {
+    const all = [];
+    for (const list of Object.values(results)) all.push(...list);
+    return all;
+  }
+  return results[category] || [];
+}
+
+async function exportSessionsZip(category) {
+  const emails = getEmailsForCategory(category);
+  if (!emails.length) { toast('No accounts to export'); return; }
+
+  const zip = new JSZip();
+
+  const sessions = emails.map(e => buildSessionLine(e)).filter(Boolean);
+  const creds = emails.map(e => buildCredentialLine(e)).filter(Boolean);
+
+  zip.file('sessions.txt', sessions.join('\n'));
+  zip.file('credentials.txt', creds.join('\n'));
+
+  const blob = await zip.generateAsync({ type: 'blob' });
+  const name = category === 'ALL' ? 'all' : category.toLowerCase();
+  downloadBlob(`${name}_sessions.zip`, blob);
+  toast(`Exported ${emails.length} accounts`);
+}
+
+function exportCredentials(category) {
+  const emails = getEmailsForCategory(category);
+  if (!emails.length) { toast('No accounts to export'); return; }
+  const lines = emails.map(e => buildCredentialLine(e)).filter(Boolean);
+  const name = category === 'ALL' ? 'all' : category.toLowerCase();
+  download(`${name}_credentials.txt`, lines.join('\n'));
+  toast(`Exported ${lines.length} credentials`);
+}
+
+// --- Copy / Download ---
 $('#copyBtn').addEventListener('click', () => {
-  const text = getCurrentList().join('\n');
+  const text = getCurrentEmails().join('\n');
   navigator.clipboard.writeText(text).then(() => toast('Copied to clipboard!'));
 });
 
 $('#downloadBtn').addEventListener('click', () => {
-  const text = getCurrentList().join('\n');
-  const name = activeTab === 'ALL' ? 'all_results' : activeTab.toLowerCase();
+  const text = getCurrentEmails().join('\n');
+  const name = activeTab === 'ALL' ? 'all_emails' : activeTab.toLowerCase() + '_emails';
   download(`${name}.txt`, text);
 });
 
-$('#downloadAllBtn').addEventListener('click', () => {
-  for (const [key, list] of Object.entries(results)) {
-    if (list.length) download(`${key.toLowerCase()}.txt`, list.join('\n'));
-  }
-  toast('Downloaded all result files');
-});
+// --- Export buttons ---
+$('#exportLiveSessions').addEventListener('click', () => exportSessionsZip('LIVE'));
+$('#exportLiveCredentials').addEventListener('click', () => exportCredentials('LIVE'));
+$('#exportAllSessions').addEventListener('click', () => exportSessionsZip('ALL'));
+$('#exportAllCredentials').addEventListener('click', () => exportCredentials('ALL'));
 
 function download(filename, content) {
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([content], { type: 'text/plain' }));
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function downloadBlob(filename, blob) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
   a.download = filename;
   a.click();
   URL.revokeObjectURL(a.href);
