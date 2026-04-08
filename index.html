@@ -152,11 +152,7 @@
 
 <script>
 const API_URL = 'https://emailscan.in/api/non/check-products';
-const CORS_PROXIES = [
-  (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
-  (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
-];
-let proxyIndex = 0;
+const PROXY_URL = '/api/check';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => document.querySelectorAll(s);
@@ -246,26 +242,16 @@ async function decompress(b64) {
 async function checkBatch(emails) {
   const compressedData = await compress(emails);
   const body = JSON.stringify({ compressedData });
-
-  // Try direct first, then CORS proxies
-  const attempts = [
-    () => fetch(API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body }),
-    ...CORS_PROXIES.map(proxy => () => fetch(proxy(API_URL), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body })),
-  ];
-
-  let lastErr;
-  for (const attempt of attempts) {
-    try {
-      const res = await attempt();
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const json = await res.json();
-      if (!json.compressedResult) throw new Error('No compressedResult in response');
-      return await decompress(json.compressedResult);
-    } catch (e) {
-      lastErr = e;
-    }
-  }
-  throw lastErr;
+  const url = PROXY_URL || API_URL;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body,
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const json = await res.json();
+  if (!json.compressedResult) throw new Error('No compressedResult in response');
+  return await decompress(json.compressedResult);
 }
 
 function sleep(ms) {
