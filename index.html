@@ -501,11 +501,12 @@ function buildSessionLine(login) {
   const data = accountDataMap[login];
   if (!data) return null;
   const cookies = data.cookies || [];
-  const session = { cookies };
-  if (data.recovery) session.recovery = data.recovery;
+  let account = data.login;
+  if (data.password) account += ':' + data.password;
+  if (data.recovery) account += ':' + data.recovery;
   const sessionObj = {
-    session,
-    account: data.password ? `${data.login}:${data.password}` : data.login,
+    session: { cookies },
+    account,
   };
   return JSON.stringify(sessionObj);
 }
