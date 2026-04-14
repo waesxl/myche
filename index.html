@@ -507,7 +507,6 @@ function buildSessionLine(login) {
     session,
     account: data.password ? `${data.login}:${data.password}` : data.login,
   };
-  if (data.recovery) sessionObj.recovery = data.recovery;
   return JSON.stringify(sessionObj);
 }
 
