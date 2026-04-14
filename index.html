@@ -217,39 +217,43 @@ function parseLine(line) {
   line = line.trim();
   if (!line) return null;
 
-  // Try format: login#password#[cookies_json]
+  // Try format with cookies JSON: login#password[#recovery][cookies_json]
   const firstHash = line.indexOf('#');
   if (firstHash !== -1) {
     const login = line.slice(0, firstHash);
     const rest = line.slice(firstHash + 1);
-    // Find where JSON array starts
     const jsonStart = rest.indexOf('[');
     if (jsonStart !== -1) {
-      const password = rest.slice(0, jsonStart).replace(/[#]$/, '');
+      const prefix = rest.slice(0, jsonStart).replace(/[#]$/, '');
       const cookiesRaw = rest.slice(jsonStart);
       let cookies = null;
       try { cookies = JSON.parse(cookiesRaw); } catch(e) {}
-      return { login, password, cookies, rawLine: line };
+      // prefix may be "password" or "password#recovery"
+      const parts = prefix.split('#');
+      const password = parts[0] || '';
+      const recovery = parts.slice(1).join('#') || '';
+      return { login, password, recovery, cookies, rawLine: line };
     }
-    // Format: login#password (no cookies)
-    const secondHash = rest.indexOf('#');
-    if (secondHash !== -1) {
-      const password = rest.slice(0, secondHash);
-      return { login, password, cookies: null, rawLine: line };
-    }
-    return { login, password: rest, cookies: null, rawLine: line };
+    // Format: login#password[#recovery] (no cookies)
+    const parts = rest.split('#');
+    const password = parts[0] || '';
+    const recovery = parts.slice(1).join('#') || '';
+    return { login, password, recovery, cookies: null, rawLine: line };
   }
 
-  // Try other delimiters: login:pass, login;pass, login|pass, login,pass
+  // Other delimiters: login:pass[:recovery], login;pass, etc.
   for (const delim of [':', ';', '|', ',', '\t', ' ']) {
     const idx = line.indexOf(delim);
     if (idx !== -1) {
-      return { login: line.slice(0, idx), password: line.slice(idx + 1), cookies: null, rawLine: line };
+      const rest = line.slice(idx + 1);
+      const parts = rest.split(delim);
+      const password = parts[0] || '';
+      const recovery = parts.slice(1).join(delim) || '';
+      return { login: line.slice(0, idx), password, recovery, cookies: null, rawLine: line };
     }
   }
 
-  // Just login
-  return { login: line, password: '', cookies: null, rawLine: line };
+  return { login: line, password: '', recovery: '', cookies: null, rawLine: line };
 }
 
 function parseAllAccounts() {
@@ -497,17 +501,23 @@ function buildSessionLine(login) {
   const data = accountDataMap[login];
   if (!data) return null;
   const cookies = data.cookies || [];
+  const session = { cookies };
+  if (data.recovery) session.recovery = data.recovery;
   const sessionObj = {
-    session: { cookies },
+    session,
     account: data.password ? `${data.login}:${data.password}` : data.login,
   };
+  if (data.recovery) sessionObj.recovery = data.recovery;
   return JSON.stringify(sessionObj);
 }
 
 function buildCredentialLine(login) {
   const data = accountDataMap[login];
   if (!data) return null;
-  return data.password ? `${data.login}:${data.password}` : data.login;
+  let line = data.login;
+  if (data.password) line += ':' + data.password;
+  if (data.recovery) line += ':' + data.recovery;
+  return line;
 }
 
 function getEmailsForCategory(category) {
