@@ -366,25 +366,41 @@ async function runCheck() {
     batches.push(logins.slice(i, i + batchSize));
   }
 
+  const MAX_RETRIES = 5;
+
   for (let i = 0; i < batches.length; i++) {
     const batch = batches[i];
     progressText.textContent = `Batch ${i + 1} / ${batches.length}`;
     progressBar.style.width = `${((i) / batches.length * 100).toFixed(0)}%`;
 
-    log(`Checking batch ${i + 1}/${batches.length} (${batch.length} accounts)...`);
+    let success = false;
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      const label = attempt > 1 ? ` (retry ${attempt - 1}/${MAX_RETRIES - 1})` : '';
+      log(`Checking batch ${i + 1}/${batches.length} (${batch.length} accounts)${label}...`);
 
-    try {
-      const res = await checkBatch(batch);
+      try {
+        const res = await checkBatch(batch);
 
-      for (const key of Object.keys(results)) {
-        if (res[key] && res[key].trim()) {
-          results[key].push(...res[key].trim().split('\n'));
+        for (const key of Object.keys(results)) {
+          if (res[key] && res[key].trim()) {
+            results[key].push(...res[key].trim().split('\n'));
+          }
+        }
+
+        log(`Batch ${i + 1} done: Live=${res.LIVE_COUNT||0} Disabled=${res.DISABLED_COUNT||0} NotExists=${res.NOTEXISTS_COUNT||0}`, 'ok');
+        success = true;
+        break;
+      } catch (err) {
+        log(`Batch ${i + 1} error: ${err.message}`, 'err');
+        if (attempt < MAX_RETRIES) {
+          log(`Retrying in ${delay/1000}s...`);
+          await sleep(delay);
         }
       }
+    }
 
-      log(`Batch ${i + 1} done: Live=${res.LIVE_COUNT||0} Disabled=${res.DISABLED_COUNT||0} NotExists=${res.NOTEXISTS_COUNT||0}`, 'ok');
-    } catch (err) {
-      log(`Batch ${i + 1} error: ${err.message}`, 'err');
+    if (!success) {
+      log(`Batch ${i + 1} failed after ${MAX_RETRIES} attempts, skipping`, 'err');
     }
 
     progressBar.style.width = `${((i + 1) / batches.length * 100).toFixed(0)}%`;
