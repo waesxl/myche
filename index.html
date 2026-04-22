@@ -105,9 +105,36 @@
   .settings-row label{font-size:13px;color:var(--text2)}
   .settings-row input[type=number]{width:70px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:13px;outline:none}
   .settings-row input[type=number]:focus{border-color:var(--accent)}
+
+  .last-update{
+    position:fixed;top:16px;right:16px;z-index:200;
+    display:inline-flex;align-items:center;gap:8px;
+    background:var(--surface);border:1px solid var(--border);
+    border-radius:999px;padding:6px 14px;font-size:12px;
+    color:var(--text2);box-shadow:0 4px 16px rgba(0,0,0,.25);
+    transition:all .25s;cursor:default;user-select:none;
+    opacity:0;transform:translateY(-6px);
+  }
+  .last-update.ready{opacity:1;transform:translateY(0)}
+  .last-update:hover{border-color:var(--accent);color:var(--text)}
+  .last-update .dot{width:6px;height:6px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green)}
+  .last-update .label{color:var(--text2);font-weight:500}
+  .last-update .when{color:var(--text);font-weight:600}
+  .last-update .sha{font-family:'Cascadia Code','Fira Code',monospace;color:var(--accent2);font-size:11px;padding:1px 6px;background:var(--surface2);border-radius:4px}
+  @media (max-width:600px){
+    .last-update{top:8px;right:8px;padding:5px 10px;font-size:11px}
+    .last-update .sha{display:none}
+  }
 </style>
 </head>
 <body>
+
+<div class="last-update" id="lastUpdate" title="Загружается...">
+  <span class="dot"></span>
+  <span class="label">Последнее обновление:</span>
+  <span class="when">—</span>
+  <span class="sha">—</span>
+</div>
 
 <div class="container">
   <header>
@@ -613,6 +640,48 @@ function toast(msg) {
 }
 
 updateCount();
+
+// --- Last update badge (последний коммит с GitHub) ---
+(function initLastUpdate(){
+  const el = $('#lastUpdate');
+  if (!el) return;
+
+  function relTime(date){
+    const s = Math.max(1, Math.floor((Date.now() - date.getTime()) / 1000));
+    if (s < 60)         return `${s} сек назад`;
+    const m = Math.floor(s / 60);
+    if (m < 60)         return `${m} мин назад`;
+    const h = Math.floor(m / 60);
+    if (h < 24)         return `${h} ч назад`;
+    const d = Math.floor(h / 24);
+    if (d < 30)         return `${d} дн назад`;
+    const mo = Math.floor(d / 30);
+    if (mo < 12)        return `${mo} мес назад`;
+    return `${Math.floor(mo / 12)} г назад`;
+  }
+
+  fetch('https://api.github.com/repos/waesxl/myche/commits?per_page=1', { cache: 'no-cache' })
+    .then(r => r.ok ? r.json() : Promise.reject(r.status))
+    .then(data => {
+      const c = data && data[0];
+      if (!c) throw new Error('no commits');
+      const date = new Date(c.commit.author.date);
+      const sha = (c.sha || '').slice(0, 7);
+      const msg = (c.commit.message || '').split('\n')[0];
+      el.querySelector('.when').textContent = relTime(date);
+      el.querySelector('.sha').textContent = sha;
+      el.title = `${msg}\n${date.toLocaleString()}\n${c.sha}`;
+      el.classList.add('ready');
+      // обновляем относительное время каждую минуту, пока страница открыта
+      setInterval(() => { el.querySelector('.when').textContent = relTime(date); }, 60000);
+    })
+    .catch(err => {
+      el.querySelector('.when').textContent = 'недоступно';
+      el.querySelector('.sha').remove();
+      el.title = `GitHub API: ${err}`;
+      el.classList.add('ready');
+    });
+})();
 </script>
 </body>
 </html>
