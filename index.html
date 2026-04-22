@@ -544,12 +544,14 @@ function buildSessionLine(login) {
   const data = accountDataMap[login];
   if (!data) return null;
   const cookies = data.cookies || [];
-  let account = data.login;
-  if (data.password) account += ':' + data.password;
-  if (data.recovery) account += ':' + data.recovery;
+  const account = data.recovery
+    ? `${data.login}:${data.password}:${data.recovery}`
+    : `${data.login}:${data.password}`;
   const sessionObj = {
-    session: { cookies, account },
+    session: { cookies },
+    account,
   };
+  if (data.recovery) sessionObj.recovery_email = data.recovery;
   return JSON.stringify(sessionObj);
 }
 
