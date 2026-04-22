@@ -521,8 +521,7 @@ function buildSessionLine(login) {
   if (data.password) account += ':' + data.password;
   if (data.recovery) account += ':' + data.recovery;
   const sessionObj = {
-    session: { cookies },
-    account,
+    session: { cookies, account },
   };
   return JSON.stringify(sessionObj);
 }
