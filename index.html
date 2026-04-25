@@ -203,11 +203,10 @@
       <div class="proxy-panel-body">
         <div class="proxy-hint">
           One endpoint per line. Each gets a different egress IP, rotating on HTTP&nbsp;403.
-          Special tokens: <code>proxy</code> (this site's <code>/api/check</code>) &middot;
-          <code>direct</code> (browser &rarr; emailscan.in, may be blocked by CORS) &middot;
+          Special token: <code>proxy</code> (this site's <code>/api/check</code>) &middot;
           any full <code>https://...</code> URL pointing to another deployment of <code>check.js</code>.
         </div>
-        <textarea class="proxy-textarea" id="proxyTextarea" spellcheck="false" placeholder="proxy&#10;direct&#10;https://my-other-deployment.pages.dev/api/check"></textarea>
+        <textarea class="proxy-textarea" id="proxyTextarea" spellcheck="false" placeholder="proxy&#10;https://my-other-deployment.pages.dev/api/check"></textarea>
         <div class="proxy-config-row">
           <label>Cooldown on 403 (sec):</label>
           <input type="number" id="cooldownSeconds" value="90" min="10" max="600">
@@ -364,10 +363,9 @@ function updateCount() {
 accountsInput.addEventListener('input', updateCount);
 
 // --- Proxy pool ---
-const DEFAULT_PROXY_LIST = ['proxy', 'direct'];
+const DEFAULT_PROXY_LIST = ['proxy'];
 
 function shortLabel(id) {
-  if (id === 'direct') return 'direct (your IP)';
   if (id === 'proxy')  return 'proxy (/api/check)';
   try {
     const u = new URL(id);
@@ -385,7 +383,8 @@ const proxyPool = {
     for (let raw of ids) {
       raw = (raw || '').trim();
       if (!raw || raw.startsWith('#')) continue;
-      if (raw !== 'direct' && raw !== 'proxy') {
+      if (raw === 'direct') continue;
+      if (raw !== 'proxy') {
         try { new URL(raw); } catch { continue; }
       }
       if (seen.has(raw)) continue;
@@ -544,7 +543,6 @@ async function decompress(b64) {
 
 // --- API call ---
 function resolveProxyUrl(entry) {
-  if (entry.id === 'direct') return API_URL;
   if (entry.id === 'proxy')  return PROXY_URL;
   return entry.id; // full URL
 }
@@ -561,11 +559,7 @@ async function checkBatch(emails, proxyEntry) {
       body,
     });
   } catch (e) {
-    const err = new Error(
-      proxyEntry.id === 'direct'
-        ? `Direct fetch blocked (CORS or network): ${e.message}`
-        : `Network error via ${proxyEntry.label}: ${e.message}`
-    );
+    const err = new Error(`Network error via ${proxyEntry.label}: ${e.message}`);
     err.status = 0;
     err.proxy = proxyEntry.label;
     throw err;
@@ -629,8 +623,6 @@ async function runCheck() {
     batches.push(logins.slice(i, i + batchSize));
   }
 
-  const MAX_RETRIES = 30;
-
   for (let i = 0; i < batches.length; i++) {
     const batch = batches[i];
     progressText.textContent = `Batch ${i + 1} / ${batches.length}`;
@@ -638,30 +630,23 @@ async function runCheck() {
 
     let success = false;
     let attempt = 0;
-    let consecutiveAllCooled = 0;
 
-    while (attempt < MAX_RETRIES) {
+    while (true) {
       attempt++;
 
       // Pick a live proxy. If all are cooled-down, wait for the earliest revive.
       let proxy = proxyPool.next();
       if (!proxy) {
         const wait = Math.max(1000, proxyPool.earliestRevive() - Date.now());
-        consecutiveAllCooled++;
-        log(`All proxies cooling down — waiting ${(wait/1000).toFixed(1)}s for revive (${consecutiveAllCooled})...`, 'err');
+        log(`All proxies cooling down — waiting ${(wait/1000).toFixed(1)}s for revive...`, 'err');
         renderProxyList();
         await sleep(wait + 200);
         attempt--; // don't count "no proxy" as a real attempt
-        if (consecutiveAllCooled >= 5) {
-          log('All proxies repeatedly cooling — try adding more endpoints to the pool.', 'err');
-          break;
-        }
         continue;
       }
-      consecutiveAllCooled = 0;
 
       const tag = `[${proxy.label}]`;
-      const label = attempt > 1 ? ` (attempt ${attempt}/${MAX_RETRIES})` : '';
+      const label = attempt > 1 ? ` (attempt ${attempt})` : '';
       log(`Checking batch ${i + 1}/${batches.length} ${tag} (${batch.length} accounts)${label}...`);
 
       try {
@@ -687,8 +672,6 @@ async function runCheck() {
           ? (parseInt($('#cooldownSeconds').value) || 90)
           : (parseInt($('#cooldownOtherSeconds').value) || 30);
         log(`Batch ${i + 1} error ${tag}: ${err.message} — cooling down ${cdSec}s, switching proxy`, 'err');
-
-        if (attempt >= MAX_RETRIES) break;
 
         // Short pause between proxy switches; bigger if every proxy just failed.
         const aliveLeft = proxyPool.proxies.filter(p => p.cooldownUntil <= Date.now()).length;
