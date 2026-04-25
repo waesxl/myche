@@ -657,13 +657,20 @@ async function runCheck() {
     while (true) {
       attempt++;
 
-      // Pick a live proxy. If all are cooled-down, wait for the earliest revive.
+      // Pick a live proxy. If all are cooled-down, retry every ~10s instead of waiting full cooldown.
       let proxy = proxyPool.next();
       if (!proxy) {
-        const wait = Math.max(1000, proxyPool.earliestRevive() - Date.now());
-        log(`All proxies cooling down — waiting ${(wait/1000).toFixed(1)}s for revive...`, 'err');
+        const RETRY_INTERVAL = 10000;
+        const wait = Math.min(RETRY_INTERVAL, Math.max(1000, proxyPool.earliestRevive() - Date.now()));
+        log(`All proxies cooling down — retry in ${(wait/1000).toFixed(1)}s...`, 'err');
         renderProxyList();
-        await sleep(wait + 200);
+        await sleep(wait);
+        // Force-revive the proxy with the earliest revive time so we can retry without waiting full cooldown.
+        let earliest = null;
+        for (const p of proxyPool.proxies) {
+          if (!earliest || p.cooldownUntil < earliest.cooldownUntil) earliest = p;
+        }
+        if (earliest) earliest.cooldownUntil = 0;
         attempt--; // don't count "no proxy" as a real attempt
         continue;
       }
