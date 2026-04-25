@@ -291,6 +291,24 @@ const resultList = $('#resultList');
 let results = { LIVE: [], DISABLED: [], NOTEXISTS: [], VERIFYED: [], UNKNOW: [] };
 let activeTab = 'LIVE';
 let isRunning = false;
+let totalAccounts = 0;
+let totalBatches = 0;
+let processedBatches = 0;
+const DEFAULT_TITLE = document.title;
+
+function updateTitle() {
+  if (!isRunning && processedBatches === 0) {
+    document.title = DEFAULT_TITLE;
+    return;
+  }
+  const L = results.LIVE.length;
+  const V = results.VERIFYED.length;
+  const D = results.DISABLED.length;
+  const checked = L + V + D + results.NOTEXISTS.length + results.UNKNOW.length;
+  const pct = totalBatches ? Math.floor(processedBatches / totalBatches * 100) : 0;
+  const prefix = isRunning ? `${pct}%` : 'Done';
+  document.title = `${prefix} L${L} V${V} D${D} • ${checked}/${totalAccounts}`;
+}
 
 // --- Store full account data keyed by login ---
 // accountDataMap[login] = { login, password, cookies, rawLine }
@@ -623,6 +641,11 @@ async function runCheck() {
     batches.push(logins.slice(i, i + batchSize));
   }
 
+  totalAccounts = logins.length;
+  totalBatches = batches.length;
+  processedBatches = 0;
+  updateTitle();
+
   for (let i = 0; i < batches.length; i++) {
     const batch = batches[i];
     progressText.textContent = `Batch ${i + 1} / ${batches.length}`;
@@ -662,6 +685,8 @@ async function runCheck() {
         renderProxyList();
         log(`Batch ${i + 1} done ${tag}: Live=${res.LIVE_COUNT||0} Disabled=${res.DISABLED_COUNT||0} NotExists=${res.NOTEXISTS_COUNT||0}`, 'ok');
         success = true;
+        processedBatches = i + 1;
+        updateTitle();
         break;
       } catch (err) {
         const status = err.status ?? 0;
@@ -699,6 +724,7 @@ async function runCheck() {
   startBtn.disabled = false;
   startBtn.textContent = 'Start Checking';
 
+  updateTitle();
   showResults();
 }
 
