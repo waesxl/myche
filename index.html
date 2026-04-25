@@ -111,6 +111,30 @@
   .settings-row .check{display:inline-flex;align-items:center;gap:6px;cursor:pointer;user-select:none;color:var(--text)}
   .settings-row .check input[type=checkbox]{accent-color:var(--accent);width:14px;height:14px;cursor:pointer}
 
+  .proxy-panel{margin-top:14px;padding:12px;background:var(--surface2);border:1px solid var(--border);border-radius:8px}
+  .proxy-panel-header{display:flex;justify-content:space-between;align-items:center;cursor:pointer;user-select:none;gap:10px;flex-wrap:wrap}
+  .proxy-panel-title{font-size:13px;font-weight:600;color:var(--text);display:flex;align-items:center;gap:8px}
+  .proxy-panel-stat{font-size:11px;color:var(--text2);font-weight:500}
+  .proxy-panel-stat b{color:var(--green)}
+  .proxy-panel-toggle{color:var(--text2);font-size:11px;margin-left:auto}
+  .proxy-panel-body{display:none;margin-top:12px}
+  .proxy-panel.expanded .proxy-panel-body{display:block}
+  .proxy-list{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+  .proxy-chip{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:var(--surface);border:1px solid var(--border);border-radius:14px;font-size:11px;font-family:'Cascadia Code','Fira Code',monospace;max-width:100%}
+  .proxy-chip .dot{width:6px;height:6px;border-radius:50%;background:var(--green);box-shadow:0 0 6px var(--green);flex-shrink:0}
+  .proxy-chip.cooldown{opacity:.65}
+  .proxy-chip.cooldown .dot{background:var(--red);box-shadow:0 0 6px var(--red)}
+  .proxy-chip.active{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+  .proxy-chip .name{color:var(--text);overflow:hidden;text-overflow:ellipsis;max-width:240px;white-space:nowrap}
+  .proxy-chip .cd{color:var(--orange);font-size:10px}
+  .proxy-chip .stat{color:var(--text2);font-size:10px}
+  .proxy-textarea{width:100%;min-height:70px;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px;color:var(--text);font-family:'Cascadia Code','Fira Code',monospace;font-size:12px;resize:vertical;outline:none;margin-top:8px}
+  .proxy-textarea:focus{border-color:var(--accent)}
+  .proxy-hint{font-size:11px;color:var(--text2);margin-top:6px;line-height:1.5}
+  .proxy-hint code{background:var(--surface);padding:1px 5px;border-radius:3px;color:var(--accent2);font-size:11px}
+  .proxy-config-row{display:flex;gap:12px;align-items:center;margin-top:10px;flex-wrap:wrap;font-size:12px;color:var(--text2)}
+  .proxy-config-row input[type=number]{width:60px;background:var(--surface);border:1px solid var(--border);border-radius:5px;padding:4px 8px;color:var(--text);font-size:12px;outline:none}
+
   .last-update{
     position:fixed;top:16px;right:16px;z-index:200;
     display:inline-flex;align-items:center;gap:8px;
@@ -164,11 +188,35 @@
       <input type="number" id="batchSize" value="10" min="1" max="10">
       <label>Delay (sec):</label>
       <input type="number" id="delaySeconds" value="1" min="1" max="30">
-      <label class="check" title="Send requests directly to emailscan.in from your browser, bypassing the Cloudflare proxy. Often blocked by CORS — leave unchecked to use the proxy.">
-        <input type="checkbox" id="useDirect">
-        Direct (your IP)
-      </label>
     </div>
+
+    <div class="proxy-panel" id="proxyPanel">
+      <div class="proxy-panel-header" id="proxyPanelHeader">
+        <div class="proxy-panel-title">
+          <span>&#128279;</span>
+          <span>Proxy pool</span>
+        </div>
+        <div class="proxy-panel-stat" id="proxyPanelStat"><b>2</b> alive / 2 total</div>
+        <div class="proxy-panel-toggle" id="proxyPanelToggle">configure &#9662;</div>
+      </div>
+      <div class="proxy-list" id="proxyList"></div>
+      <div class="proxy-panel-body">
+        <div class="proxy-hint">
+          One endpoint per line. Each gets a different egress IP, rotating on HTTP&nbsp;403.
+          Special tokens: <code>proxy</code> (this site's <code>/api/check</code>) &middot;
+          <code>direct</code> (browser &rarr; emailscan.in, may be blocked by CORS) &middot;
+          any full <code>https://...</code> URL pointing to another deployment of <code>check.js</code>.
+        </div>
+        <textarea class="proxy-textarea" id="proxyTextarea" spellcheck="false" placeholder="proxy&#10;direct&#10;https://my-other-deployment.pages.dev/api/check"></textarea>
+        <div class="proxy-config-row">
+          <label>Cooldown on 403 (sec):</label>
+          <input type="number" id="cooldownSeconds" value="90" min="10" max="600">
+          <label>Cooldown on other errors (sec):</label>
+          <input type="number" id="cooldownOtherSeconds" value="30" min="5" max="600">
+        </div>
+      </div>
+    </div>
+
     <button class="btn btn-primary" id="startBtn" disabled>Start Checking</button>
   </div>
 
@@ -315,12 +363,141 @@ function updateCount() {
 
 accountsInput.addEventListener('input', updateCount);
 
-// Persist Direct/proxy preference
-(function initDirectToggle(){
-  const cb = $('#useDirect');
-  const stored = localStorage.getItem('useDirect');
-  if (stored !== null) cb.checked = stored === '1';
-  cb.addEventListener('change', () => localStorage.setItem('useDirect', cb.checked ? '1' : '0'));
+// --- Proxy pool ---
+const DEFAULT_PROXY_LIST = ['proxy', 'direct'];
+
+function shortLabel(id) {
+  if (id === 'direct') return 'direct (your IP)';
+  if (id === 'proxy')  return 'proxy (/api/check)';
+  try {
+    const u = new URL(id);
+    return u.hostname + (u.pathname && u.pathname !== '/' ? u.pathname : '');
+  } catch { return id; }
+}
+
+const proxyPool = {
+  proxies: [],          // [{id, label, cooldownUntil, fail, ok, lastError}]
+  cursor: 0,
+
+  setFromList(ids) {
+    const cleaned = [];
+    const seen = new Set();
+    for (let raw of ids) {
+      raw = (raw || '').trim();
+      if (!raw || raw.startsWith('#')) continue;
+      if (raw !== 'direct' && raw !== 'proxy') {
+        try { new URL(raw); } catch { continue; }
+      }
+      if (seen.has(raw)) continue;
+      seen.add(raw);
+      cleaned.push(raw);
+    }
+    if (!cleaned.length) cleaned.push('proxy');
+
+    const oldMap = new Map(this.proxies.map(p => [p.id, p]));
+    this.proxies = cleaned.map(id => oldMap.get(id) || {
+      id, label: shortLabel(id),
+      cooldownUntil: 0, fail: 0, ok: 0, lastError: null,
+    });
+    if (this.cursor >= this.proxies.length) this.cursor = 0;
+    renderProxyList();
+  },
+
+  next() {
+    if (!this.proxies.length) return null;
+    const now = Date.now();
+    for (let i = 0; i < this.proxies.length; i++) {
+      const idx = (this.cursor + i) % this.proxies.length;
+      const p = this.proxies[idx];
+      if (p.cooldownUntil <= now) {
+        this.cursor = (idx + 1) % this.proxies.length;
+        return p;
+      }
+    }
+    return null;
+  },
+
+  earliestRevive() {
+    if (!this.proxies.length) return Infinity;
+    return Math.min(...this.proxies.map(p => p.cooldownUntil));
+  },
+
+  markFail(p, status, msg) {
+    p.fail++;
+    p.lastError = msg;
+    const cdSec = (status === 403)
+      ? (parseInt($('#cooldownSeconds').value) || 90)
+      : (parseInt($('#cooldownOtherSeconds').value) || 30);
+    p.cooldownUntil = Date.now() + cdSec * 1000;
+  },
+
+  markSuccess(p) {
+    p.ok++;
+    p.fail = 0;
+    p.cooldownUntil = 0;
+  },
+};
+
+function renderProxyList() {
+  const listEl = $('#proxyList');
+  const statEl = $('#proxyPanelStat');
+  if (!listEl || !statEl) return;
+
+  const now = Date.now();
+  let alive = 0;
+  listEl.innerHTML = proxyPool.proxies.map(p => {
+    const cd = Math.max(0, p.cooldownUntil - now);
+    const isCd = cd > 0;
+    if (!isCd) alive++;
+    const cdTxt = isCd ? `<span class="cd">${Math.ceil(cd/1000)}s</span>` : '';
+    const stat = (p.ok || p.fail) ? `<span class="stat">&#10003;${p.ok} &#10005;${p.fail}</span>` : '';
+    return `<span class="proxy-chip${isCd ? ' cooldown' : ''}" data-id="${escapeHtml(p.id)}">
+      <span class="dot"></span>
+      <span class="name" title="${escapeHtml(p.id)}">${escapeHtml(p.label)}</span>
+      ${cdTxt}${stat}
+    </span>`;
+  }).join('');
+  statEl.innerHTML = `<b>${alive}</b> alive / ${proxyPool.proxies.length} total`;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// Re-render every second to update cooldown countdown
+setInterval(() => { if (proxyPool.proxies.length) renderProxyList(); }, 1000);
+
+// --- Proxy panel UI bindings ---
+(function initProxyPanel(){
+  const panel = $('#proxyPanel');
+  const header = $('#proxyPanelHeader');
+  const ta = $('#proxyTextarea');
+  const cdSec = $('#cooldownSeconds');
+  const cdOther = $('#cooldownOtherSeconds');
+
+  // restore
+  const stored = localStorage.getItem('proxyList');
+  const lines = stored ? stored.split('\n') : DEFAULT_PROXY_LIST.slice();
+  ta.value = lines.join('\n');
+  proxyPool.setFromList(lines);
+
+  const storedCd = localStorage.getItem('cooldownSeconds');
+  if (storedCd) cdSec.value = storedCd;
+  const storedCdOther = localStorage.getItem('cooldownOtherSeconds');
+  if (storedCdOther) cdOther.value = storedCdOther;
+
+  // expand/collapse
+  header.addEventListener('click', () => panel.classList.toggle('expanded'));
+
+  // textarea -> pool
+  ta.addEventListener('input', () => {
+    const list = ta.value.split(/\r?\n/);
+    localStorage.setItem('proxyList', list.join('\n'));
+    proxyPool.setFromList(list);
+  });
+
+  cdSec.addEventListener('change', () => localStorage.setItem('cooldownSeconds', cdSec.value));
+  cdOther.addEventListener('change', () => localStorage.setItem('cooldownOtherSeconds', cdOther.value));
 })();
 
 // --- File handling ---
@@ -366,10 +543,16 @@ async function decompress(b64) {
 }
 
 // --- API call ---
-async function checkBatch(emails, useDirect) {
+function resolveProxyUrl(entry) {
+  if (entry.id === 'direct') return API_URL;
+  if (entry.id === 'proxy')  return PROXY_URL;
+  return entry.id; // full URL
+}
+
+async function checkBatch(emails, proxyEntry) {
   const compressedData = await compress(emails);
   const body = JSON.stringify({ compressedData });
-  const url = useDirect ? API_URL : PROXY_URL;
+  const url = resolveProxyUrl(proxyEntry);
   let res;
   try {
     res = await fetch(url, {
@@ -378,20 +561,36 @@ async function checkBatch(emails, useDirect) {
       body,
     });
   } catch (e) {
-    // Network/CORS failure — surface a hint
-    if (useDirect) throw new Error(`Direct fetch blocked (CORS or network) — uncheck "Direct" to use the proxy. ${e.message}`);
-    throw e;
+    const err = new Error(
+      proxyEntry.id === 'direct'
+        ? `Direct fetch blocked (CORS or network): ${e.message}`
+        : `Network error via ${proxyEntry.label}: ${e.message}`
+    );
+    err.status = 0;
+    err.proxy = proxyEntry.label;
+    throw err;
   }
   const text = await res.text();
   if (!res.ok) {
-    throw new Error(`HTTP ${res.status} ${text.slice(0, 120).replace(/\s+/g, ' ')}`);
+    const err = new Error(`HTTP ${res.status} ${text.slice(0, 120).replace(/\s+/g, ' ')}`);
+    err.status = res.status;
+    err.proxy = proxyEntry.label;
+    throw err;
   }
   let json;
   try { json = JSON.parse(text); }
-  catch (e) { throw new Error(`Non-JSON upstream: ${text.slice(0, 120).replace(/\s+/g, ' ')}`); }
+  catch (e) {
+    const err = new Error(`Non-JSON upstream: ${text.slice(0, 120).replace(/\s+/g, ' ')}`);
+    err.status = res.status;
+    err.proxy = proxyEntry.label;
+    throw err;
+  }
   if (!json.compressedResult) {
     const snippet = JSON.stringify(json).slice(0, 160);
-    throw new Error(`No compressedResult — upstream said: ${snippet}`);
+    const err = new Error(`No compressedResult — upstream said: ${snippet}`);
+    err.status = res.status;
+    err.proxy = proxyEntry.label;
+    throw err;
   }
   return await decompress(json.compressedResult);
 }
@@ -409,7 +608,11 @@ async function runCheck() {
 
   const batchSize = parseInt($('#batchSize').value) || 10;
   const delay = (parseInt($('#delaySeconds').value) || 3) * 1000;
-  const useDirect = $('#useDirect').checked;
+
+  if (!proxyPool.proxies.length) {
+    log('No proxies configured — falling back to /api/check', 'err');
+    proxyPool.setFromList(['proxy']);
+  }
 
   isRunning = true;
   startBtn.disabled = true;
@@ -434,12 +637,35 @@ async function runCheck() {
     progressBar.style.width = `${((i) / batches.length * 100).toFixed(0)}%`;
 
     let success = false;
-    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    let attempt = 0;
+    let consecutiveAllCooled = 0;
+
+    while (attempt < MAX_RETRIES) {
+      attempt++;
+
+      // Pick a live proxy. If all are cooled-down, wait for the earliest revive.
+      let proxy = proxyPool.next();
+      if (!proxy) {
+        const wait = Math.max(1000, proxyPool.earliestRevive() - Date.now());
+        consecutiveAllCooled++;
+        log(`All proxies cooling down — waiting ${(wait/1000).toFixed(1)}s for revive (${consecutiveAllCooled})...`, 'err');
+        renderProxyList();
+        await sleep(wait + 200);
+        attempt--; // don't count "no proxy" as a real attempt
+        if (consecutiveAllCooled >= 5) {
+          log('All proxies repeatedly cooling — try adding more endpoints to the pool.', 'err');
+          break;
+        }
+        continue;
+      }
+      consecutiveAllCooled = 0;
+
+      const tag = `[${proxy.label}]`;
       const label = attempt > 1 ? ` (attempt ${attempt}/${MAX_RETRIES})` : '';
-      log(`Checking batch ${i + 1}/${batches.length} (${batch.length} accounts)${label}...`);
+      log(`Checking batch ${i + 1}/${batches.length} ${tag} (${batch.length} accounts)${label}...`);
 
       try {
-        const res = await checkBatch(batch, useDirect);
+        const res = await checkBatch(batch, proxy);
 
         for (const key of Object.keys(results)) {
           if (res[key] && res[key].trim()) {
@@ -447,24 +673,32 @@ async function runCheck() {
           }
         }
 
-        log(`Batch ${i + 1} done: Live=${res.LIVE_COUNT||0} Disabled=${res.DISABLED_COUNT||0} NotExists=${res.NOTEXISTS_COUNT||0}`, 'ok');
+        proxyPool.markSuccess(proxy);
+        renderProxyList();
+        log(`Batch ${i + 1} done ${tag}: Live=${res.LIVE_COUNT||0} Disabled=${res.DISABLED_COUNT||0} NotExists=${res.NOTEXISTS_COUNT||0}`, 'ok');
         success = true;
         break;
       } catch (err) {
-        log(`Batch ${i + 1} error: ${err.message}`, 'err');
-        if (attempt < MAX_RETRIES) {
-          // Exponential backoff with jitter, capped at 15s — снижает шанс попасть под rate-limit
-          const backoff = Math.min(delay * Math.pow(2, attempt - 1), 15000);
-          const jitter = Math.floor(Math.random() * 500);
-          const waitMs = backoff + jitter;
-          log(`Retrying in ${(waitMs/1000).toFixed(1)}s...`);
-          await sleep(waitMs);
-        }
+        const status = err.status ?? 0;
+        proxyPool.markFail(proxy, status, err.message);
+        renderProxyList();
+
+        const cdSec = (status === 403)
+          ? (parseInt($('#cooldownSeconds').value) || 90)
+          : (parseInt($('#cooldownOtherSeconds').value) || 30);
+        log(`Batch ${i + 1} error ${tag}: ${err.message} — cooling down ${cdSec}s, switching proxy`, 'err');
+
+        if (attempt >= MAX_RETRIES) break;
+
+        // Short pause between proxy switches; bigger if every proxy just failed.
+        const aliveLeft = proxyPool.proxies.filter(p => p.cooldownUntil <= Date.now()).length;
+        const wait = aliveLeft > 0 ? 400 + Math.floor(Math.random() * 400) : 1500;
+        await sleep(wait);
       }
     }
 
     if (!success) {
-      log(`Batch ${i + 1} failed after ${MAX_RETRIES} attempts, skipping`, 'err');
+      log(`Batch ${i + 1} failed after ${attempt} attempts, skipping`, 'err');
     }
 
     progressBar.style.width = `${((i + 1) / batches.length * 100).toFixed(0)}%`;
