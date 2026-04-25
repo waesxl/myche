@@ -361,9 +361,17 @@ async function checkBatch(emails) {
     headers: { 'Content-Type': 'application/json' },
     body,
   });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const json = await res.json();
-  if (!json.compressedResult) throw new Error('No compressedResult in response');
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status} ${text.slice(0, 120).replace(/\s+/g, ' ')}`);
+  }
+  let json;
+  try { json = JSON.parse(text); }
+  catch (e) { throw new Error(`Non-JSON upstream: ${text.slice(0, 120).replace(/\s+/g, ' ')}`); }
+  if (!json.compressedResult) {
+    const snippet = JSON.stringify(json).slice(0, 160);
+    throw new Error(`No compressedResult — upstream said: ${snippet}`);
+  }
   return await decompress(json.compressedResult);
 }
 
@@ -423,8 +431,12 @@ async function runCheck() {
       } catch (err) {
         log(`Batch ${i + 1} error: ${err.message}`, 'err');
         if (attempt < MAX_RETRIES) {
-          log(`Retrying in ${delay/1000}s...`);
-          await sleep(delay);
+          // Exponential backoff with jitter, capped at 15s — снижает шанс попасть под rate-limit
+          const backoff = Math.min(delay * Math.pow(2, attempt - 1), 15000);
+          const jitter = Math.floor(Math.random() * 500);
+          const waitMs = backoff + jitter;
+          log(`Retrying in ${(waitMs/1000).toFixed(1)}s...`);
+          await sleep(waitMs);
         }
       }
     }
