@@ -4,6 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Email Checker</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><defs><linearGradient id='b' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='%236c5ce7'/><stop offset='.55' stop-color='%237c6cf0'/><stop offset='1' stop-color='%2340c4ff'/></linearGradient><linearGradient id='e' x1='0' y1='0' x2='0' y2='1'><stop offset='0' stop-color='%23ffffff'/><stop offset='1' stop-color='%23e4e4ef'/></linearGradient></defs><rect x='2' y='2' width='60' height='60' rx='14' fill='url(%23b)'/><rect x='2' y='2' width='60' height='60' rx='14' fill='none' stroke='rgba(255,255,255,.18)' stroke-width='1.5'/><path d='M14 22.5c0-1.7 1.4-3 3-3h30c1.7 0 3 1.3 3 3v19c0 1.7-1.3 3-3 3H17c-1.6 0-3-1.3-3-3V22.5z' fill='url(%23e)'/><path d='M14.8 22l16.1 12c.7.5 1.6.5 2.3 0L49.2 22' fill='none' stroke='%236c5ce7' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'/><circle cx='48' cy='46' r='11' fill='%2300e676' stroke='%230a0a0f' stroke-width='2.5'/><path d='M43 46.2l3.6 3.6L53.2 43' fill='none' stroke='%230a0a0f' stroke-width='3.4' stroke-linecap='round' stroke-linejoin='round'/></svg>">
+<link rel="apple-touch-icon" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><defs><linearGradient id='b' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='%236c5ce7'/><stop offset='.55' stop-color='%237c6cf0'/><stop offset='1' stop-color='%2340c4ff'/></linearGradient></defs><rect width='64' height='64' rx='14' fill='url(%23b)'/><path d='M14 22.5c0-1.7 1.4-3 3-3h30c1.7 0 3 1.3 3 3v19c0 1.7-1.3 3-3 3H17c-1.6 0-3-1.3-3-3V22.5z' fill='%23ffffff'/><path d='M14.8 22l16.1 12c.7.5 1.6.5 2.3 0L49.2 22' fill='none' stroke='%236c5ce7' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'/><circle cx='48' cy='46' r='11' fill='%2300e676' stroke='%230a0a0f' stroke-width='2.5'/><path d='M43 46.2l3.6 3.6L53.2 43' fill='none' stroke='%230a0a0f' stroke-width='3.4' stroke-linecap='round' stroke-linejoin='round'/></svg>">
+<meta name="theme-color" content="#6c5ce7">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <style>
   *{margin:0;padding:0;box-sizing:border-box}
@@ -158,7 +161,7 @@
       <label>Batch size:</label>
       <input type="number" id="batchSize" value="10" min="1" max="10">
       <label>Delay (sec):</label>
-      <input type="number" id="delaySeconds" value="3" min="1" max="30">
+      <input type="number" id="delaySeconds" value="1" min="1" max="30">
     </div>
     <button class="btn btn-primary" id="startBtn" disabled>Start Checking</button>
   </div>
@@ -393,7 +396,7 @@ async function runCheck() {
     batches.push(logins.slice(i, i + batchSize));
   }
 
-  const MAX_RETRIES = 5;
+  const MAX_RETRIES = 30;
 
   for (let i = 0; i < batches.length; i++) {
     const batch = batches[i];
@@ -402,7 +405,7 @@ async function runCheck() {
 
     let success = false;
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-      const label = attempt > 1 ? ` (retry ${attempt - 1}/${MAX_RETRIES - 1})` : '';
+      const label = attempt > 1 ? ` (attempt ${attempt}/${MAX_RETRIES})` : '';
       log(`Checking batch ${i + 1}/${batches.length} (${batch.length} accounts)${label}...`);
 
       try {
