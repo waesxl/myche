@@ -108,6 +108,8 @@
   .settings-row label{font-size:13px;color:var(--text2)}
   .settings-row input[type=number]{width:70px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:13px;outline:none}
   .settings-row input[type=number]:focus{border-color:var(--accent)}
+  .settings-row .check{display:inline-flex;align-items:center;gap:6px;cursor:pointer;user-select:none;color:var(--text)}
+  .settings-row .check input[type=checkbox]{accent-color:var(--accent);width:14px;height:14px;cursor:pointer}
 
   .last-update{
     position:fixed;top:16px;right:16px;z-index:200;
@@ -162,6 +164,10 @@
       <input type="number" id="batchSize" value="10" min="1" max="10">
       <label>Delay (sec):</label>
       <input type="number" id="delaySeconds" value="1" min="1" max="30">
+      <label class="check" title="Send requests directly to emailscan.in from your browser, bypassing the Cloudflare proxy. Recommended — proxy IPs are often rate-limited.">
+        <input type="checkbox" id="useDirect" checked>
+        Direct (your IP)
+      </label>
     </div>
     <button class="btn btn-primary" id="startBtn" disabled>Start Checking</button>
   </div>
@@ -309,6 +315,14 @@ function updateCount() {
 
 accountsInput.addEventListener('input', updateCount);
 
+// Persist Direct/proxy preference
+(function initDirectToggle(){
+  const cb = $('#useDirect');
+  const stored = localStorage.getItem('useDirect');
+  if (stored !== null) cb.checked = stored === '1';
+  cb.addEventListener('change', () => localStorage.setItem('useDirect', cb.checked ? '1' : '0'));
+})();
+
 // --- File handling ---
 $('#browseBtn').addEventListener('click', () => fileInput.click());
 dropZone.addEventListener('click', () => fileInput.click());
@@ -352,15 +366,22 @@ async function decompress(b64) {
 }
 
 // --- API call ---
-async function checkBatch(emails) {
+async function checkBatch(emails, useDirect) {
   const compressedData = await compress(emails);
   const body = JSON.stringify({ compressedData });
-  const url = PROXY_URL || API_URL;
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body,
-  });
+  const url = useDirect ? API_URL : PROXY_URL;
+  let res;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+    });
+  } catch (e) {
+    // Network/CORS failure — surface a hint
+    if (useDirect) throw new Error(`Direct fetch blocked (CORS or network) — uncheck "Direct" to use the proxy. ${e.message}`);
+    throw e;
+  }
   const text = await res.text();
   if (!res.ok) {
     throw new Error(`HTTP ${res.status} ${text.slice(0, 120).replace(/\s+/g, ' ')}`);
@@ -388,6 +409,7 @@ async function runCheck() {
 
   const batchSize = parseInt($('#batchSize').value) || 10;
   const delay = (parseInt($('#delaySeconds').value) || 3) * 1000;
+  const useDirect = $('#useDirect').checked;
 
   isRunning = true;
   startBtn.disabled = true;
@@ -417,7 +439,7 @@ async function runCheck() {
       log(`Checking batch ${i + 1}/${batches.length} (${batch.length} accounts)${label}...`);
 
       try {
-        const res = await checkBatch(batch);
+        const res = await checkBatch(batch, useDirect);
 
         for (const key of Object.keys(results)) {
           if (res[key] && res[key].trim()) {
